@@ -1,64 +1,97 @@
-import Image from "next/image";
+import Link from "next/link";
+import { HierarchyBudgetGrid } from "@/components/ledger/hierarchy-budget-grid";
+import { getVisibleDiariesForRequestUser } from "@/lib/diary/queries";
 
-export default function Home() {
+function RoleBadge({ role }: { role: "owner" | "manager" | "viewer" | "guest" }) {
+  const toneClassName =
+    role === "owner"
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+      : role === "manager"
+        ? "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+        : role === "viewer"
+          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200";
+
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneClassName}`}>{role}</span>;
+}
+
+export default async function Home() {
+  const { diaries, isLoggedIn } = await getVisibleDiariesForRequestUser();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="min-h-screen bg-[radial-gradient(circle_at_20%_-10%,#f4f7ff_0%,#f8fafc_40%,#f1f5f9_100%)] px-4 py-8 dark:bg-[radial-gradient(circle_at_20%_-10%,#111827_0%,#09090b_50%,#020617_100%)]">
+      <main className="mx-auto w-full max-w-6xl space-y-6">
+        <section className="rounded-3xl border border-white/60 bg-white/85 p-6 shadow-lg shadow-zinc-200/40 backdrop-blur-xl dark:border-zinc-800/70 dark:bg-zinc-950/80 dark:shadow-black/40">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                TopDownBudget Cockpit
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                내 가계부 / 공개 가계부
+              </h1>
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                {isLoggedIn
+                  ? "접근 가능한 가계부를 확인하고 상세 화면으로 이동할 수 있습니다."
+                  : "로그인 전에는 공개(public) 가계부를 확인할 수 있습니다."}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-right dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">기본 통화</p>
+              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">KRW</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/85 p-6 shadow-lg shadow-zinc-200/40 backdrop-blur-xl dark:border-zinc-800/70 dark:bg-zinc-950/80 dark:shadow-black/40">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">가계부 목록</h2>
+            <Link
+              href="/new"
+              className="rounded-xl border border-zinc-300 px-3 py-1.5 text-sm font-medium transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+              새 가계부 만들기
+            </Link>
+          </div>
+
+          {diaries.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-zinc-300 p-4 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+              {isLoggedIn
+                ? "아직 접근 가능한 가계부가 없습니다. 새 가계부를 만들어 시작해보세요."
+                : "아직 노출할 공개 가계부가 없습니다. 로그인 후 직접 생성해보세요."}
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {diaries.map(({ diary, role }) => (
+                <Link
+                  key={diary.id}
+                  href={`/diary/${diary.id}`}
+                  className="group rounded-2xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="line-clamp-2 text-sm font-semibold text-zinc-900 group-hover:underline dark:text-zinc-100">
+                      {diary.title}
+                    </h3>
+                    <RoleBadge role={role} />
+                  </div>
+
+                  <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                    visibility: {diary.is_public ? "public" : "private"} · base currency: {diary.base_currency}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">하이라키 그리드 데모</h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            아래 영역은 현재 샘플 데이터 기반입니다. 다음 단계에서 실제 DB 데이터와 연결할 예정입니다.
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+        </section>
+
+        <HierarchyBudgetGrid />
       </main>
     </div>
   );
