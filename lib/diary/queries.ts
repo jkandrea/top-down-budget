@@ -40,8 +40,79 @@ type CategoryRow = {
 };
 
 type EntryRow = {
+  id?: string;
+  entry_type?: "income" | "expense";
+  parent_entry_id?: string | null;
+  sort_order?: number;
+  content?: string;
   category_id: string | null;
   amount: string | number;
+  currency?: string;
+  memo?: string | null;
+  entry_date?: string;
+};
+
+export type DiaryEntriesQueryFilters = {
+  q?: string;
+  categoryId?: string;
+  from?: string;
+  to?: string;
+  entryType?: "income" | "expense" | "";
+};
+
+export type DiaryEntryListItem = {
+  id: string;
+  entryType: "income" | "expense";
+  amount: number;
+  currency: string;
+  memo: string | null;
+  entryDate: string;
+  categoryId: string | null;
+  categoryName: string | null;
+};
+
+export type DiaryCategoryOption = {
+  id: string;
+  name: string;
+};
+
+export type DiaryEntriesResult = {
+  categories: DiaryCategoryOption[];
+  entries: DiaryEntryListItem[];
+  incomeTotal: number;
+  expenseTotal: number;
+};
+
+export type DiaryEntryTreeNode = {
+  id: string;
+  parentEntryId: string | null;
+  content: string;
+  entryDate: string;
+  signedAmount: number;
+  currency: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  memo: string | null;
+  children: DiaryEntryTreeNode[];
+};
+
+export type DiaryEntryTreeResult = {
+  categories: DiaryCategoryOption[];
+  nodes: DiaryEntryTreeNode[];
+};
+
+export type DiaryBalanceSnapshotItem = {
+  id: string;
+  snapshotDate: string;
+  balance: number;
+  note: string | null;
+};
+
+export type DiaryBalanceSnapshotResult = {
+  snapshots: DiaryBalanceSnapshotItem[];
+  latest: DiaryBalanceSnapshotItem | null;
+  previous: DiaryBalanceSnapshotItem | null;
+  delta: number | null;
 };
 
 export type DiaryLedgerResult = {
@@ -76,8 +147,13 @@ export async function getDiaryDetailForRequestUser(diaryId: string): Promise<Dia
   }
 
   let membershipRole: "owner" | "manager" | "viewer" | null = null;
+  let effectiveRole: "owner" | "manager" | "viewer" | null = null;
 
   if (userData.user) {
+    if (diary.owner_user_id === userData.user.id) {
+      effectiveRole = "owner";
+    }
+
     const { data: membership } = await admin
       .from("diary_memberships")
       .select("role")
@@ -86,11 +162,15 @@ export async function getDiaryDetailForRequestUser(diaryId: string): Promise<Dia
       .maybeSingle<{ role: "owner" | "manager" | "viewer" }>();
 
     membershipRole = membership?.role ?? null;
+
+    if (!effectiveRole && membershipRole) {
+      effectiveRole = membershipRole;
+    }
   }
 
   const role = resolveRole({
     isPublic: diary.is_public,
-    membershipRole,
+    membershipRole: effectiveRole,
   });
 
   if (!role) {
@@ -165,9 +245,12 @@ export async function getVisibleDiariesForRequestUser(): Promise<VisibleDiariesR
 
   const diaryItems: DiaryListItem[] = diaries
     .map((diary) => {
+      const effectiveMembershipRole: "owner" | "manager" | "viewer" | null =
+        diary.owner_user_id === user.id ? "owner" : (membershipRoleByDiaryId.get(diary.id) ?? null);
+
       const role = resolveRole({
         isPublic: diary.is_public,
-        membershipRole: membershipRoleByDiaryId.get(diary.id) ?? null,
+        membershipRole: effectiveMembershipRole,
       });
 
       if (!role) {
@@ -251,5 +334,172 @@ export async function getDiaryLedgerForRequestUser(diaryId: string): Promise<Dia
   return {
     nodes: buildChildren(null),
     role: detail.role,
+  };
+}
+
+export async function getDiaryEntriesForDiary(
+  diaryId: string,
+  filters: DiaryEntriesQueryFilters,
+): Promise<DiaryEntriesResult> {
+  const admin = createAdminClient();
+  const { q, categoryId, from, to, entryType } = filters;
+
+  const { data: categories } = await admin
+    .from("categories")
+    .select("id,name")
+    .eq("diary_id", diaryId)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .returns<Array<{ id: string; name: string }>>();
+
+  let entriesQuery = admin
+    .from("entries")
+    .select("id,entry_type,amount,currency,memo,entry_date,category_id")
+    .eq("diary_id", diaryId)
+    .order("entry_date", { ascending: false })
+    .limit(300);
+
+  if (entryType === "income" || entryType === "expense") {
+    entriesQuery = entriesQuery.eq("entry_type", entryType);
+  }
+
+  if (categoryId) {
+    entriesQuery = entriesQuery.eq("category_id", categoryId);
+  }
+
+  if (from) {
+    entriesQuery = entriesQuery.gte("entry_date", from);
+  }
+
+  if (to) {
+    entriesQuery = entriesQuery.lte("entry_date", to);
+  }
+
+  const { data: entriesRows } = await entriesQuery.returns<EntryRow[]>();
+
+  const categoryMap = new Map<string, string>((categories ?? []).map((category) => [category.id, category.name]));
+
+  let entries: DiaryEntryListItem[] = (entriesRows ?? []).map((row) => ({
+    id: String(row.id ?? crypto.randomUUID()),
+    entryType: row.entry_type === "income" ? "income" : "expense",
+    amount: Number(row.amount ?? 0),
+    currency: row.currency ?? "KRW",
+    memo: row.memo ?? null,
+    entryDate: row.entry_date ?? "",
+    categoryId: row.category_id,
+    categoryName: row.category_id ? categoryMap.get(row.category_id) ?? null : null,
+  }));
+
+  if (q && q.trim()) {
+    const keyword = q.trim().toLowerCase();
+    entries = entries.filter((entry) => {
+      const memoText = (entry.memo ?? "").toLowerCase();
+      const categoryText = (entry.categoryName ?? "").toLowerCase();
+      return memoText.includes(keyword) || categoryText.includes(keyword);
+    });
+  }
+
+  const incomeTotal = entries
+    .filter((entry) => entry.entryType === "income")
+    .reduce((acc, entry) => acc + entry.amount, 0);
+  const expenseTotal = entries
+    .filter((entry) => entry.entryType === "expense")
+    .reduce((acc, entry) => acc + entry.amount, 0);
+
+  return {
+    categories: categories ?? [],
+    entries,
+    incomeTotal,
+    expenseTotal,
+  };
+}
+
+export async function getDiaryBalanceSnapshotsForDiary(diaryId: string): Promise<DiaryBalanceSnapshotResult> {
+  const admin = createAdminClient();
+
+  const { data } = await admin
+    .from("diary_balance_snapshots")
+    .select("id,snapshot_date,balance,note")
+    .eq("diary_id", diaryId)
+    .order("snapshot_date", { ascending: false })
+    .limit(20)
+    .returns<Array<{ id: string; snapshot_date: string; balance: number | string; note: string | null }>>();
+
+  const snapshots: DiaryBalanceSnapshotItem[] = (data ?? []).map((row) => ({
+    id: row.id,
+    snapshotDate: row.snapshot_date,
+    balance: Number(row.balance ?? 0),
+    note: row.note,
+  }));
+
+  const latest = snapshots[0] ?? null;
+  const previous = snapshots[1] ?? null;
+
+  return {
+    snapshots,
+    latest,
+    previous,
+    delta: latest && previous ? latest.balance - previous.balance : null,
+  };
+}
+
+export async function getDiaryEntryTreeForDiary(diaryId: string): Promise<DiaryEntryTreeResult> {
+  const admin = createAdminClient();
+
+  const [{ data: categories }, { data: rows }] = await Promise.all([
+    admin
+      .from("categories")
+      .select("id,name")
+      .eq("diary_id", diaryId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true })
+      .returns<Array<{ id: string; name: string }>>(),
+    admin
+      .from("entries")
+      .select("id,parent_entry_id,sort_order,content,entry_type,amount,currency,entry_date,category_id,memo")
+      .eq("diary_id", diaryId)
+      .order("sort_order", { ascending: true })
+      .order("entry_date", { ascending: true })
+      .order("created_at", { ascending: true })
+      .returns<EntryRow[]>(),
+  ]);
+
+  const categoryMap = new Map<string, string>((categories ?? []).map((category) => [category.id, category.name]));
+
+  const items: DiaryEntryTreeNode[] = (rows ?? [])
+    .filter((row): row is EntryRow & { id: string } => Boolean(row.id))
+    .map((row) => {
+      const amount = Number(row.amount ?? 0);
+      const signedAmount = row.entry_type === "income" ? amount : -amount;
+
+      return {
+        id: row.id,
+        parentEntryId: row.parent_entry_id ?? null,
+        content: row.content ?? row.memo ?? "",
+        entryDate: row.entry_date ?? "",
+        signedAmount,
+        currency: row.currency ?? "KRW",
+        categoryId: row.category_id,
+        categoryName: row.category_id ? categoryMap.get(row.category_id) ?? null : null,
+        memo: row.memo ?? null,
+        children: [],
+      };
+    });
+
+  const byId = new Map<string, DiaryEntryTreeNode>(items.map((item) => [item.id, item]));
+  const roots: DiaryEntryTreeNode[] = [];
+
+  for (const item of items) {
+    if (item.parentEntryId && byId.has(item.parentEntryId)) {
+      byId.get(item.parentEntryId)?.children.push(item);
+      continue;
+    }
+
+    roots.push(item);
+  }
+
+  return {
+    categories: categories ?? [],
+    nodes: roots,
   };
 }
