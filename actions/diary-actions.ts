@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 function parseBaseCurrency(input: FormDataEntryValue | null): string {
@@ -33,7 +34,10 @@ export async function createDiaryAction(formData: FormData): Promise<void> {
   const isPublic = formData.get("is_public") === "on";
   const baseCurrency = parseBaseCurrency(formData.get("base_currency"));
 
-  const { data: diary, error: diaryError } = await supabase
+  // Use server-only key for write bootstrap flow after explicit user verification.
+  const admin = createAdminClient();
+
+  const { data: diary, error: diaryError } = await admin
     .from("diaries")
     .insert({
       owner_user_id: user.id,
@@ -48,7 +52,7 @@ export async function createDiaryAction(formData: FormData): Promise<void> {
     throw new Error(diaryError?.message ?? "가계부 생성에 실패했습니다.");
   }
 
-  const { error: membershipError } = await supabase.from("diary_memberships").insert({
+  const { error: membershipError } = await admin.from("diary_memberships").insert({
     diary_id: diary.id,
     user_id: user.id,
     role: "owner",

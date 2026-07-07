@@ -26,16 +26,34 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function HierarchyBudgetGrid() {
-  const [role, setRole] = useState<LedgerRole>("owner");
-  const [nodes, setNodes] = useState<LedgerNode[]>(INITIAL_LEDGER_TREE);
-  const [expanded, setExpanded] = useState<ExpandedState>({
-    food: true,
-    living: true,
-    self: true,
-  });
+type HierarchyBudgetGridProps = {
+  initialRole?: LedgerRole;
+  initialNodes?: LedgerNode[];
+  allowRoleSwitch?: boolean;
+  editable?: boolean;
+};
 
-  const canEdit = roleCanEdit(role);
+function defaultExpandedState(nodes: LedgerNode[]): ExpandedState {
+  const expanded: Record<string, boolean> = {};
+
+  for (const node of nodes) {
+    expanded[node.id] = true;
+  }
+
+  return expanded;
+}
+
+export function HierarchyBudgetGrid({
+  initialRole = "owner",
+  initialNodes = INITIAL_LEDGER_TREE,
+  allowRoleSwitch = true,
+  editable = true,
+}: HierarchyBudgetGridProps) {
+  const [role, setRole] = useState<LedgerRole>(initialRole);
+  const [nodes, setNodes] = useState<LedgerNode[]>(initialNodes);
+  const [expanded, setExpanded] = useState<ExpandedState>(defaultExpandedState(initialNodes));
+
+  const canEdit = editable && roleCanEdit(role);
   const gridRows = useMemo(() => buildGridRows(nodes), [nodes]);
   const summary = useMemo(() => summarize(nodes), [nodes]);
 
@@ -194,20 +212,32 @@ export function HierarchyBudgetGrid() {
             기타는 자동 계산됩니다: 기타 = 상위 입력 금액 - 하위 집행 합계
           </p>
         </div>
-        <label className="text-sm text-zinc-600 dark:text-zinc-300">
-          권한
-          <select
-            className="ml-2 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-            value={role}
-            onChange={(event) => setRole(event.target.value as LedgerRole)}
-          >
-            <option value="owner">owner</option>
-            <option value="manager">manager</option>
-            <option value="viewer">viewer</option>
-            <option value="guest">guest(public 조회자)</option>
-          </select>
-        </label>
+        {allowRoleSwitch ? (
+          <label className="text-sm text-zinc-600 dark:text-zinc-300">
+            권한
+            <select
+              className="ml-2 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              value={role}
+              onChange={(event) => setRole(event.target.value as LedgerRole)}
+            >
+              <option value="owner">owner</option>
+              <option value="manager">manager</option>
+              <option value="viewer">viewer</option>
+              <option value="guest">guest(public 조회자)</option>
+            </select>
+          </label>
+        ) : (
+          <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium uppercase text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+            role: {role}
+          </span>
+        )}
       </div>
+
+      {nodes.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-zinc-300 p-4 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+          아직 분류/지출 데이터가 없습니다. 카테고리와 내역이 추가되면 하이라키 요약이 표시됩니다.
+        </div>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="상위 입력 총액" value={formatWon(summary.parentBudget)} />

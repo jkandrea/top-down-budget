@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { HierarchyBudgetGrid } from "@/components/ledger/hierarchy-budget-grid";
-import { getVisibleDiariesForRequestUser } from "@/lib/diary/queries";
+import { getDiaryLedgerForRequestUser, getVisibleDiariesForRequestUser } from "@/lib/diary/queries";
 
 function RoleBadge({ role }: { role: "owner" | "manager" | "viewer" | "guest" }) {
   const toneClassName =
@@ -17,6 +17,8 @@ function RoleBadge({ role }: { role: "owner" | "manager" | "viewer" | "guest" })
 
 export default async function Home() {
   const { diaries, isLoggedIn } = await getVisibleDiariesForRequestUser();
+  const previewDiary = diaries[0] ?? null;
+  const ledgerPreview = previewDiary ? await getDiaryLedgerForRequestUser(previewDiary.diary.id) : null;
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_20%_-10%,#f4f7ff_0%,#f8fafc_40%,#f1f5f9_100%)] px-4 py-8 dark:bg-[radial-gradient(circle_at_20%_-10%,#111827_0%,#09090b_50%,#020617_100%)]">
@@ -85,13 +87,26 @@ export default async function Home() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">하이라키 그리드 데모</h2>
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">하이라키 그리드 미리보기</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            아래 영역은 현재 샘플 데이터 기반입니다. 다음 단계에서 실제 DB 데이터와 연결할 예정입니다.
+            {previewDiary
+              ? `최신 가계부(${previewDiary.diary.title}) 기준으로 계산된 계층 요약입니다.`
+              : "가계부를 하나 이상 생성하면 하이라키 미리보기가 표시됩니다."}
           </p>
         </section>
 
-        <HierarchyBudgetGrid />
+        {previewDiary && ledgerPreview ? (
+          <HierarchyBudgetGrid
+            initialNodes={ledgerPreview.nodes}
+            initialRole={ledgerPreview.role}
+            allowRoleSwitch={false}
+            editable={false}
+          />
+        ) : (
+          <div className="rounded-2xl border border-dashed border-zinc-300 p-5 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+            아직 미리보기할 하이라키 데이터가 없습니다. 먼저 가계부를 생성하거나 분류/지출 내역을 추가해 주세요.
+          </div>
+        )}
       </main>
     </div>
   );
