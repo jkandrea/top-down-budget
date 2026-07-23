@@ -1,44 +1,52 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { createEntryAction, deleteEntryAction } from "@/actions/entry-actions";
+import { createEntryAction } from "@/actions/entry-actions";
 import { EntryTreeDnd } from "@/components/diary/entry-tree-dnd";
 import { canEditDiary } from "@/lib/auth/permissions";
 import {
   getDiaryDetailForRequestUser,
   getDiaryEntryTreeForDiary,
-  type DiaryEntryTreeNode,
 } from "@/lib/diary/queries";
+import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   params: Promise<{ id: string }>;
 };
-
-function flattenTree(nodes: DiaryEntryTreeNode[]): DiaryEntryTreeNode[] {
-  const flattened: DiaryEntryTreeNode[] = [];
-
-  const walk = (items: DiaryEntryTreeNode[]) => {
-    for (const item of items) {
-      flattened.push(item);
-      walk(item.children);
-    }
-  };
-
-  walk(nodes);
-  return flattened;
-}
 
 export default async function DiaryEntriesPage({ params }: PageProps) {
   const { id } = await params;
   const detail = await getDiaryDetailForRequestUser(id);
 
   if (!detail) {
-    notFound();
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const message = user
+      ? "접근 권한이 없거나 존재하지 않는 가계부입니다."
+      : "로그인이 필요하거나 접근 권한이 없는 가계부입니다.";
+
+    return (
+      <main className="mx-auto w-full max-w-xl space-y-4 px-4 py-16">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h1 className="text-xl font-semibold tracking-tight">내역 페이지에 접근할 수 없습니다.</h1>
+          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">{message}</p>
+          <div className="mt-5 flex items-center gap-2">
+            <Link
+              href={user ? "/" : "/login"}
+              className="rounded-xl border border-zinc-300 px-3 py-1.5 text-sm font-medium transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              {user ? "홈으로 이동" : "로그인 하러가기"}
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   const { diary, role } = detail;
   const canEdit = canEditDiary(role);
   const treeResult = await getDiaryEntryTreeForDiary(id);
-  const flatNodes = flattenTree(treeResult.nodes);
 
   return (
     <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-10">
@@ -151,37 +159,6 @@ export default async function DiaryEntriesPage({ params }: PageProps) {
         nodes={treeResult.nodes}
         categories={treeResult.categories}
       />
-
-      {canEdit && flatNodes.length > 0 ? (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <h2 className="text-sm font-semibold tracking-tight">내역 삭제</h2>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            삭제하면 해당 내역의 하위 내역도 함께 삭제됩니다.
-          </p>
-          <form action={deleteEntryAction} className="mt-3 flex flex-wrap items-center gap-2">
-            <input type="hidden" name="diary_id" value={diary.id} />
-            <select
-              name="entry_id"
-              required
-              defaultValue=""
-              className="min-w-64 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900"
-            >
-              <option value="">삭제할 내역 선택</option>
-              {flatNodes.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.content}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              className="rounded-xl border border-rose-300 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-950/30"
-            >
-              선택 내역 삭제
-            </button>
-          </form>
-        </section>
-      ) : null}
     </main>
   );
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { canEditDiary } from "@/lib/auth/permissions";
 import { getDiaryDetailForRequestUser, getDiaryEntriesForDiary } from "@/lib/diary/queries";
+import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -28,7 +28,31 @@ export default async function DiaryDetailPage({ params, searchParams }: PageProp
   const detail = await getDiaryDetailForRequestUser(id);
 
   if (!detail) {
-    notFound();
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const message = user
+      ? "접근 권한이 없거나 존재하지 않는 가계부입니다."
+      : "로그인이 필요하거나 접근 권한이 없는 가계부입니다.";
+
+    return (
+      <main className="mx-auto w-full max-w-xl space-y-4 px-4 py-16">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+          <h1 className="text-xl font-semibold tracking-tight">가계부 상세에 접근할 수 없습니다.</h1>
+          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">{message}</p>
+          <div className="mt-5 flex items-center gap-2">
+            <Link
+              href={user ? "/" : "/login"}
+              className="rounded-xl border border-zinc-300 px-3 py-1.5 text-sm font-medium transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              {user ? "홈으로 이동" : "로그인 하러가기"}
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   const { diary, role } = detail;

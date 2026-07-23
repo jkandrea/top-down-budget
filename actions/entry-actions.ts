@@ -123,6 +123,34 @@ async function assertCanEditDiary(diaryId: string): Promise<{ userId: string }> 
   return { userId: user.id };
 }
 
+function toSignedAmount(entryType: "income" | "expense", amount: number): number {
+  return entryType === "income" ? amount : -amount;
+}
+
+function toEntryPatchFromSignedAmount(signedAmount: number): {
+  entry_type: "income" | "expense";
+  amount: number;
+} {
+  if (signedAmount > 0) {
+    return {
+      entry_type: "income",
+      amount: Math.abs(signedAmount),
+    };
+  }
+
+  if (signedAmount < 0) {
+    return {
+      entry_type: "expense",
+      amount: Math.abs(signedAmount),
+    };
+  }
+
+  return {
+    entry_type: "expense",
+    amount: 0,
+  };
+}
+
 export async function createEntryAction(formData: FormData): Promise<void> {
   const diaryId = parseRequiredString(formData.get("diary_id"), "diary_id");
   const content = parseRequiredString(formData.get("content"), "content");
@@ -378,6 +406,8 @@ export async function moveEntryAction(formData: FormData): Promise<void> {
 export async function deleteEntryAction(formData: FormData): Promise<void> {
   const diaryId = parseRequiredString(formData.get("diary_id"), "diary_id");
   const entryId = parseRequiredString(formData.get("entry_id"), "entry_id");
+  const returnTo = parseOptionalString(formData.get("return_to"));
+  const noRedirect = parseOptionalString(formData.get("no_redirect")) === "1";
 
   await assertCanEditDiary(diaryId);
   const admin = createAdminClient();
@@ -390,7 +420,181 @@ export async function deleteEntryAction(formData: FormData): Promise<void> {
 
   revalidatePath(`/diary/${diaryId}`);
   revalidatePath(`/diary/${diaryId}/entries`);
-  redirect(`/diary/${diaryId}/entries`);
+
+  if (!noRedirect) {
+    redirect(returnTo ?? `/diary/${diaryId}/entries`);
+  }
+}
+
+export async function updateEntryAmountAction(formData: FormData): Promise<void> {
+  const diaryId = parseRequiredString(formData.get("diary_id"), "diary_id");
+  const entryId = parseRequiredString(formData.get("entry_id"), "entry_id");
+  const signedAmount = parseSignedAmount(formData.get("signed_amount"));
+
+  await assertCanEditDiary(diaryId);
+  const admin = createAdminClient();
+
+  const patch = toEntryPatchFromSignedAmount(signedAmount);
+  const { error } = await admin
+    .from("entries")
+    .update(patch)
+    .eq("id", entryId)
+    .eq("diary_id", diaryId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/diary/${diaryId}`);
+  revalidatePath(`/diary/${diaryId}/entries`);
+}
+
+export async function reconcileEntryTotalAction(formData: FormData): Promise<void> {
+  const diaryId = parseRequiredString(formData.get("diary_id"), "diary_id");
+  const entryId = parseRequiredString(formData.get("entry_id"), "entry_id");
+
+  await assertCanEditDiary(diaryId);
+  const admin = createAdminClient();
+
+  const [{ data: parent, error: parentError }, { data: children, error: childrenError }] = await Promise.all([
+    admin
+      .from("entries")
+      .select("id,entry_type,amount")
+      .eq("id", entryId)
+      .eq("diary_id", diaryId)
+      .maybeSingle<{ id: string; entry_type: "income" | "expense"; amount: number }>(),
+    admin
+      .from("entries")
+      .select("entry_type,amount")
+      .eq("diary_id", diaryId)
+      .eq("parent_entry_id", entryId)
+      .returns<Array<{ entry_type: "income" | "expense"; amount: number }>>(),
+  ]);
+
+  if (parentError || !parent) {
+    throw new Error("정산 대상 내역을 찾을 수 없습니다.");
+  }
+
+  if (childrenError) {
+    throw new Error(childrenError.message);
+  }
+
+  const childrenSignedSum = (children ?? []).reduce((acc, child) => {
+    return acc + toSignedAmount(child.entry_type, Number(child.amount) || 0);
+  }, 0);
+
+  if ((children ?? []).length === 0) {
+    throw new Error("하위 내역이 없어 총액 정산을 할 수 없습니다.");
+  }
+
+  const nextPatch =
+    childrenSignedSum === 0
+      ? {
+          entry_type: parent.entry_type,
+          amount: 0,
+        }
+      : toEntryPatchFromSignedAmount(childrenSignedSum);
+
+  const { error: updateError } = await admin
+    .from("entries")
+    .update(nextPatch)
+    .eq("id", entryId)
+    .eq("diary_id", diaryId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  revalidatePath(`/diary/${diaryId}`);
+  revalidatePath(`/diary/${diaryId}/entries`);
+}
+
+export async function reconcileEntryRemainderAction(formData: FormData): Promise<void> {
+  const diaryId = parseRequiredString(formData.get("diary_id"), "diary_id");
+  const entryId = parseRequiredString(formData.get("entry_id"), "entry_id");
+
+  const { userId } = await assertCanEditDiary(diaryId);
+  const admin = createAdminClient();
+
+  const [{ data: parent, error: parentError }, { data: children, error: childrenError }] = await Promise.all([
+    admin
+      .from("entries")
+      .select("id,entry_type,amount,currency,category_id,entry_date")
+      .eq("id", entryId)
+      .eq("diary_id", diaryId)
+      .maybeSingle<{
+        id: string;
+        entry_type: "income" | "expense";
+        amount: number;
+        currency: string;
+        category_id: string | null;
+        entry_date: string;
+      }>(),
+    admin
+      .from("entries")
+      .select("id,entry_type,amount,content")
+      .eq("diary_id", diaryId)
+      .eq("parent_entry_id", entryId)
+      .order("sort_order", { ascending: true })
+      .returns<Array<{ id: string; entry_type: "income" | "expense"; amount: number; content: string }>>(),
+  ]);
+
+  if (parentError || !parent) {
+    throw new Error("정산 대상 내역을 찾을 수 없습니다.");
+  }
+
+  if (childrenError) {
+    throw new Error(childrenError.message);
+  }
+
+  const childRows = children ?? [];
+  const existingEtc = childRows.find((child) => child.content.trim() === "기타");
+  const childrenSignedSumWithoutEtc = childRows
+    .filter((child) => child.content.trim() !== "기타")
+    .reduce((acc, child) => {
+      return acc + toSignedAmount(child.entry_type, Number(child.amount) || 0);
+    }, 0);
+  const parentSignedAmount = toSignedAmount(parent.entry_type, Number(parent.amount) || 0);
+  const diff = parentSignedAmount - childrenSignedSumWithoutEtc;
+
+  const patch = toEntryPatchFromSignedAmount(diff);
+
+  if (existingEtc) {
+    const { error: updateError } = await admin
+      .from("entries")
+      .update({
+        ...patch,
+        memo: "잔액 정산 자동 계산",
+      })
+      .eq("id", existingEtc.id)
+      .eq("diary_id", diaryId);
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+  } else {
+    const sortOrder = await getNextSortOrder(diaryId, entryId);
+    const { error: insertError } = await admin.from("entries").insert({
+      diary_id: diaryId,
+      parent_entry_id: entryId,
+      sort_order: sortOrder,
+      content: "기타",
+      entry_type: patch.entry_type,
+      amount: patch.amount,
+      currency: parent.currency,
+      category_id: parent.category_id,
+      memo: "잔액 정산 자동 계산",
+      entry_date: parent.entry_date,
+      created_by: userId,
+    });
+
+    if (insertError) {
+      throw new Error(insertError.message);
+    }
+  }
+
+  revalidatePath(`/diary/${diaryId}`);
+  revalidatePath(`/diary/${diaryId}/entries`);
 }
 
 export async function createCategoryAction(formData: FormData): Promise<void> {
